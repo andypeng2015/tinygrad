@@ -539,5 +539,9 @@ def create_schedule_with_vars(big_sink:UOp, skip_check:bool=not __debug__) -> tu
   if DEBUG >= 1 and len(schedule) >= 10: print(f"scheduled {len(schedule)} kernels")
   # capture process replay
   if CAPTURE_PROCESS_REPLAY:
-    with Context(PICKLE_BUFFERS=0): diskcache_put("schedule_process_replay", id(big_sink), (big_sink, ContextVar._cache, [x.ast for x in schedule]))
+    import traceback
+    stack = filter(lambda x: "tinygrad" in x.filename and not any(n in x.filename for n in ["engine/schedule.py", "engine/realize.py", \
+      "codegen/kernel.py", "unittest"]), traceback.extract_stack()[:-1])
+    loc = "\n".join(traceback.format_list(stack))
+    with Context(PICKLE_BUFFERS=0): diskcache_put("schedule_process_replay", id(big_sink), (big_sink, loc, ContextVar._cache, [x.ast for x in schedule]))
   return schedule, ctx.var_vals, ctx.becomes_map

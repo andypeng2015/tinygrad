@@ -29,7 +29,7 @@ class ProcessReplayWarning(Warning): pass
 
 # *** recreators
 
-def recreate_sched(big_sink:UOp) -> list[UOp]:
+def recreate_sched(big_sink:UOp, loc) -> list[UOp]:
   sched, _, __ = create_schedule_with_vars(big_sink)
   return [x.ast for x in sched]
 
