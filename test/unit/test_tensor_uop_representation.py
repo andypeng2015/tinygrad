@@ -30,12 +30,11 @@ class TestTensorMutates(unittest.TestCase):
     out.realize()
     is_pattern_uop(out.lazydata.base, realized_pattern)
 
-  @unittest.skipIf(Device.DEFAULT == "CLANG", "not on CLANG")
   def test_copy_reshape_zero(self):
     a = Tensor([1,2,3])
     out = a.to("clang").pad((0, 4))[5:]
     out.realize()
-    is_pattern_uop(out.lazydata.base, realized_pattern)
+    is_pattern_uop(out.lazydata.base, const_pattern)
 
   def test_reshape_is_same_parent(self):
     a = Tensor([1,2,3])
