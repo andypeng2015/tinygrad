@@ -1,4 +1,4 @@
-import sys, atexit, functools, pickle
+import sys, functools
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from tinygrad.ops import GroupOp, UOp, Ops, PatternMatcher, UPat, Variable, can_pad, graph_rewrite, resolve, track_rewrites, view_left, merge_views
@@ -539,5 +539,5 @@ def create_schedule_with_vars(big_sink:UOp, skip_check:bool=not __debug__) -> tu
   if DEBUG >= 1 and len(schedule) >= 10: print(f"scheduled {len(schedule)} kernels")
   # capture process replay
   if CAPTURE_PROCESS_REPLAY:
-    with Context(PICKLE_BUFFERS=0): diskcache_put("schedule_process_replay", str(big_sink.key), (big_sink, ContextVar._cache, [x.ast for x in schedule]))
+    with Context(PICKLE_BUFFERS=0): diskcache_put("schedule_process_replay", id(big_sink), (big_sink, ContextVar._cache, [x.ast for x in schedule]))
   return schedule, ctx.var_vals, ctx.becomes_map

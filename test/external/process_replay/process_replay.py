@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 # compare kernels created by HEAD against master
-from collections import defaultdict
 import os, multiprocessing, logging, pickle, sqlite3, difflib, functools, warnings
 from typing import Callable, List, Tuple, Union, cast
 from tinygrad.helpers import VERSION, Context, ContextVar, colored, db_connection, getenv, tqdm
-from tinygrad.engine.schedule import ScheduleContext, create_schedule_with_vars
+from tinygrad.engine.schedule import create_schedule_with_vars
 from tinygrad.codegen.kernel import Kernel, Opt
 from tinygrad.renderer import Renderer
 from tinygrad.ops import UOp
