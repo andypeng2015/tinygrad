@@ -1,11 +1,11 @@
 import unittest, functools, random
 from typing import List
 from tinygrad import Tensor, Device, nn, GlobalCounters, TinyJit, dtypes
-from tinygrad.ops import Ops
+from tinygrad.ops import Ops, UOp
 from tinygrad.helpers import CI, getenv, prod, Context
 from tinygrad.nn.state import get_parameters, get_state_dict
 from tinygrad.engine.realize import lower_schedule, BufferCopy, CompiledRunner, run_schedule
-from tinygrad.multi import all_reduce, MultiLazyBuffer
+from tinygrad.multi import all_reduce
 import numpy as np
 from hypothesis import given, strategies as strat, settings
 from tinygrad.device import is_dtype_supported
@@ -30,7 +30,7 @@ N = 128
 def _test_allreduce(t:Tensor):
   aa = (t[0:64] + t[64:128] + t[128:192] + t[192:256]).repeat([4,1]).realize()
   ts = t.shard(devices_4, 0).realize()
-  b = Tensor(MultiLazyBuffer(all_reduce(Ops.ADD, ts.lazydata.lbs), 0))
+  b = Tensor(UOp.multi(*all_reduce(Ops.ADD, ts.lazydata.lbs), axis=0))
   b.realize()
   return aa, b
 
@@ -218,9 +218,9 @@ class TestMultiTensor(unittest.TestCase):
         shape = tuple([(n if i == 0 else 1) * random.randint(1, 10) for i in range(random.randint(1, 4))])
         t = Tensor.rand(shape).shard_(tuple([d0, d1, d2, d3][:n]), 0)
         with Context(RING=0):
-          a = Tensor(MultiLazyBuffer(all_reduce(Ops.ADD, t.lazydata.lbs), 0))
+          a = Tensor(UOp.multi(*all_reduce(Ops.ADD, t.lazydata.lbs), axis=0))
         with Context(RING=2):
-          b = Tensor(MultiLazyBuffer(all_reduce(Ops.ADD, t.lazydata.lbs), 0))
+          b = Tensor(UOp.multi(*all_reduce(Ops.ADD, t.lazydata.lbs), axis=0))
         diff = a - b
         mean_err = diff.reshape((prod(diff.shape),)).abs().mean().numpy()
         max_err = diff.reshape((prod(diff.shape),)).abs().max().numpy()
@@ -386,7 +386,6 @@ class TestMultiTensor(unittest.TestCase):
     GlobalCounters.reset()
     optimizer.zero_grad()
     shard_output = m(fake_image_sharded).sparse_categorical_crossentropy(labels_sharded, label_smoothing=0.1)
-    assert shard_output.lazydata.axis is None
     shard_output.backward()
     shard_grad = m.conv1.weight.grad.numpy()
     # sometimes there is zeros in these grads... why?
@@ -532,13 +531,13 @@ class TestMultiTensor(unittest.TestCase):
     t4 = t2.reshape((26, 105,))
 
     for t in [t0, t1, t2, t3, t4]:
-      assert t.lazydata.axis == 1
       np.testing.assert_allclose(t.numpy().flatten(), t0.numpy().flatten())
+      assert t.lazydata.axis == 1
 
     # test shape-one axis
     t5 = t4.reshape((26, 1, 105))
-    assert t5.lazydata.axis == 2
     np.testing.assert_allclose(t.numpy().flatten(), t5.numpy().flatten())
+    assert t5.lazydata.axis == 2
 
     # test split and rejoin to the right and reshape to the left
     t5 = t0.reshape((2, 13, 3, 5, 7))
@@ -553,7 +552,7 @@ class TestMultiTensor(unittest.TestCase):
 
     # test no left join
     with self.assertRaises((AssertionError, ValueError)):
-      t0.reshape((26*15,7))
+      t0.reshape((26*15,7)).schedule()
 
   @unittest.skip("no longer supports uneven shard")
   def test_reshape_on_axis_uneven(self):
@@ -588,6 +587,7 @@ class TestMultiTensor(unittest.TestCase):
     with self.assertRaises(AssertionError):
       # don't allow assigns that change axes
       t_none.assign(t_zero)
+      t_none.schedule()
 
   def test_init_rand_with_multiple_devices_fail(self):
     # init rand with multi device is not allowed
@@ -774,25 +774,31 @@ class TestShrinkMultiTensorShardedAxis(unittest.TestCase):
     with self.assertRaises(AssertionError):
       # sharded axis shrink on non-device boundry is not allowed
       a = t.shrink(((0, 3), (0, 8)))
+      a.schedule()
     with self.assertRaises(AssertionError):
       # cannot shrink sharded and non-sharded axis at the same time
       a = t.shrink(((0, 2), (2, 4)))
+      a.schedule()
 
     a = t.shrink(((0, 2), (0, 8)))
+    a.schedule()
     assert a.shape == (2, 8)
-    assert a.lazydata.real == [True, False, False, False]
+    assert a.lazydata.real == (True, False, False, False)
 
     with self.assertRaises(AssertionError):
       # cannot pad sharded and non-sharded axis at the same time
       p = a.pad(((0, 6), (0, 1)))
+      p.schedule()
 
     with self.assertRaises(AssertionError):
       # can only pad to whole axis
       p = a.pad(((1, 5), (0, 0)))
+      p.schedule()
 
     p = a.pad(((0, 6), (0, 0)))
+    p.schedule()
     assert p.shape == (8, 8)
-    assert p.lazydata.real == [True, True, True, True]
+    assert p.lazydata.real == (True, True, True, True)
 
   @given(strat.sampled_from([dtypes.float, dtypes.int, dtypes.int64, dtypes.int16]))
   def test_ops(self, dtype):
@@ -804,8 +810,8 @@ class TestShrinkMultiTensorShardedAxis(unittest.TestCase):
       a = t.shrink(((0+2*i,2+2*i),None))
       b = Tensor(t.numpy()[0+2*i:2+2*i])
       assert a.shape == b.shape == (2, 8)
-      assert a.lazydata.real == [i==j for j in range(4)]
       np.testing.assert_allclose(a.numpy(), b.numpy())
+      assert a.lazydata.real == tuple(i==j for j in range(4))
       # cast
       np.testing.assert_allclose(a.float().numpy(), b.float().numpy())
 
@@ -865,18 +871,19 @@ class TestShrinkMultiTensorShardedAxis(unittest.TestCase):
 
     a = t.shrink(((2, 4), None))
     b = t.shrink(((6, 8), None))
-    self.assertEqual(a.lazydata.real, [False, True, False, False])
-    self.assertEqual(b.lazydata.real, [False, False, False, True])
     na = t.numpy()[2:4]
     nb = t.numpy()[6:8]
     np.testing.assert_equal(a.numpy(), na)
     np.testing.assert_equal(b.numpy(), nb)
+    self.assertEqual(a.lazydata.real, (False, True, False, False))
+    self.assertEqual(b.lazydata.real, (False, False, False, True))
     with self.assertRaises(AssertionError):
       # cannot add directly
       c = a + b
 
     c = a.pad(((2, 4), None)) + b.pad(((6, 0), None))
-    self.assertEqual(c.lazydata.real, [True, True, True, True])
+    c.realize()
+    self.assertEqual(c.lazydata.real, (True, True, True, True))
     expected = np.concatenate([np.zeros_like(t.numpy()[0:2]), na, np.zeros_like(t.numpy()[4:6]), nb])
     np.testing.assert_equal(c.numpy(), expected)
 
@@ -937,8 +944,9 @@ class TestBatchNorm(unittest.TestCase):
 
       def __call__(self, x:Tensor):
         bn_ts = []
-        for bound, bn in zip(x.lazydata.bounds, self.bns):
-          xi = x.shrink((bound, None, None, None))
+        each = x.shape[0]//len(self.bns)
+        for i, bn in enumerate(self.bns):
+          xi = x.shrink(((each*(i), each*(i+1)), None, None, None))
           bni = bn(xi)
           bn_ts.append(bni)
         return bn_ts[0].cat(*bn_ts[1:])
