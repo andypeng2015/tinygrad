@@ -412,11 +412,6 @@ def realize_before_view(ctx:ScheduleContext, view:UOp, src:UOp, b:UOp, **kwargs)
   # otherwise safety check pads
   return None if (all(v.mask is None for v in st.views) or can_pad(src, ctx.realizes, set())) else realize(ctx, b, src)
 
-def fold_img_cast(ctx:ScheduleContext, xb:UOp, view:UOp, b:UOp, x:UOp, **kwargs) -> UOp|None:
-  if not isinstance(xb.dtype, ImageDType) or b not in ctx.realizes or xb not in ctx.realizes or uval(x.base).op is Ops.COPY: return None
-  del ctx.realizes[b]
-  return x.view(unwrap(view.st))
-
 def create_subbuffer(base:UOp, b:UOp, root:UOp, x:UOp):
   if not b.device.startswith("DISK"): return None
   buffers[b] = x.buf_uop.buffer.view(b.size, b.dtype, unwrap(x.st).views[0].offset*x.dtype.itemsize)
@@ -429,9 +424,6 @@ do_realize = PatternMatcher([
   (UPatScheduled({Ops.ASSIGN, Ops.CONTIGUOUS, Ops.COPY, Ops.BUFFER_VIEW}), realize),
   # realize before expand or unsafe pad ops
   (UPat(Ops.VIEW, name="view", src=(UPatScheduled(name="src"),)), realize_before_view),
-  # don't realize image to image casts
-  (UPat(Ops.VIEW, name="view", src=(UPatScheduled(Ops.CAST, src=(UPat(Ops.VIEW, src=(UPat.var("xb"), UPat()), name="x"),), dtype=dtypes.float),)),
-   fold_img_cast),
   # realize before COPY or BUFFER_VIEW
   (UPat(Ops.COPY, src=(UPat(), UPat.any(UPatScheduled(), UPatScheduled().view()),)), realize),
   (UPat(Ops.BUFFER_VIEW, src=(UPat.any(UPatScheduled(), UPatScheduled().view()),)), realize),
