@@ -4,10 +4,10 @@ from collections import defaultdict
 import os, multiprocessing, logging, pickle, sqlite3, difflib, functools, warnings
 from typing import Callable, cast
 from tinygrad.helpers import VERSION, Context, ContextVar, colored, db_connection, getenv, tqdm
-from tinygrad.engine.schedule import ScheduleContext, schedule_uop
+from tinygrad.engine.schedule import create_schedule_with_vars
+from tinygrad.ops import UOp
 from tinygrad.codegen.kernel import Kernel, Opt
 from tinygrad.renderer import Renderer
-from tinygrad.ops import UOp
 
 # *** process replay settings
 
@@ -30,9 +30,9 @@ class ProcessReplayWarning(Warning): pass
 
 # *** recreators
 
-def recreate_sched(ast:UOp) -> UOp:
-  # NOTE: process replay isn't meant to actually schedule anything
-  return schedule_uop(ast, ScheduleContext(tensor_uops=defaultdict(list))).ast
+def recreate_sched(big_sink:UOp) -> list[UOp]:
+  sched, _, __ = create_schedule_with_vars(big_sink)
+  return [x.ast for x in sched]
 def recreate_kernel(ast:UOp, opts:Renderer, applied_opts:list[Opt], name:str) -> str:
   k = Kernel(ast, opts=opts)
   for opt in applied_opts: k.apply_opt(opt)
