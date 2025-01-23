@@ -97,6 +97,7 @@ def add_buffers(buf:UOp, tensor_map:dict[UOp, list[UOp]], ctx:ScheduleContext, c
   # VIEW is passthrough
   if buf is not buf.base:
     cache[buf] = ret = add_buffers(buf.base, tensor_map, ctx, cache).view(unwrap(buf.st))
+    ctx.tensor_uops[ret.buf_uop] += tensor_map.get(buf, [buf])
     return ret
   # make things that can't be images not images
   dtype = buf.dtype
@@ -509,7 +510,12 @@ def create_schedule_with_vars(big_sink:UOp, skip_check:bool=not __debug__) -> tu
     prescheduled.append(schedule_uop(small_sink, ctx))
     # can only schedule once
     for buf_uop in store_uops:
-      for luop in ctx.tensor_uops[buf_uop]: ctx.becomes_map[luop] = buf_uop.view(unwrap(luop.st))
+      for luop in ctx.tensor_uops[buf_uop]:
+        sym_uop = tensor_map.get(luop, luop)
+        # first, we apply the base ShapeTracker on the buffer
+        becomes = buf_uop.view(unwrap(sym_uop.base.st))
+        # we also apply a second VIEW if there are movement ops after STORE
+        ctx.becomes_map[luop] = becomes if sym_uop is sym_uop.base else becomes.view(unwrap(sym_uop.st))
 
   # tensors can become an existing buffer or simplify to a const, no ScheduleItem needed
   for k,v in tensor_map.items():
