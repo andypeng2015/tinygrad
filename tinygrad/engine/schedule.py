@@ -363,7 +363,9 @@ def replace_contiguous(ctx:ScheduleContext, alu:UOp):
   if tuple(new_src) != alu.src: return alu.replace(src=tuple(new_src))
 
 def copy_to_device(root:UOp, dest:UOp, view:UOp, x:UOp):
-  if view.size < x.size: return root.replace(src=(dest, view.contiguous()))
+  if view.size < x.size:
+    # NOTE: arg is false here because contiguous VIEW is functionally equivilant to clone.
+    return root.replace(src=(dest, view.contiguous()), arg=False)
   if x.op is Ops.BUFFER:
     flat_st = ShapeTracker.from_shape((x.size,))
     if view.st == flat_st: return None
