@@ -108,7 +108,7 @@ def add_buffers(buf:UOp, tensor_map:dict[UOp, list[UOp]], ctx:ScheduleContext, c
   buf_uop = buf.buf_uop if buf.op is Ops.ASSIGN else UOp.new_buffer(buf.device, buf.size, dtype)
   op = buf.replace(dtype=dtype, src=tuple(add_buffers(x, tensor_map, ctx, cache) for x in buf.src))
   # track the underlying tensor uop for this buffer
-  ctx.tensor_uops[buf_uop] = tensor_map[buf]
+  ctx.tensor_uops[buf_uop] = tensor_map.get(buf, [buf])
   # (early) bufferize
   cache[buf] = ret = UOp(Ops.VIEW, dtype.base, (buf_uop, op), buf.st)
   return ret
@@ -362,6 +362,14 @@ def replace_contiguous(ctx:ScheduleContext, alu:UOp):
     if (replace_src:=ctx.contiguous.get(s, None)) is not None: new_src[i] = replace_src
   if tuple(new_src) != alu.src: return alu.replace(src=tuple(new_src))
 
+def copy_to_device(root:UOp, dest:UOp, view:UOp, x:UOp):
+  if view.size < x.size: return root.replace(src=(dest, view.contiguous()))
+  if x.op is Ops.BUFFER:
+    flat_st = ShapeTracker.from_shape((x.size,))
+    if view.st == flat_st: return None
+    return root.replace(src=(dest, x.view(flat_st))).view(view.st)
+  return root.replace(src=(dest, x)).view(view.st)
+
 sym = symbolic_simple+PatternMatcher([
   # UOp with size 0 is zero
   (UPat(set(Ops)-{Ops.SINK}, name="root"), lambda root: root.const_like(0) if root.base.st is not None and root.size == 0 \
@@ -378,6 +386,8 @@ sym = symbolic_simple+PatternMatcher([
   # no COPY to same device, except clone (arg is True)
   (UPat(Ops.COPY, src=(UPat(), UPat.var("copyin")), name="copy"),
    lambda copyin,copy: copyin if copyin.device == copy.device and copy.arg is not True else None),
+  # remove view from copy parent
+  (UPat(Ops.COPY, name="root", src=(UPat.var("dest"), UPat(Ops.VIEW, name="view", src=(UPat.var("x"),)))), copy_to_device),
   # remove cast to image when it's already a contiguous image
   (UPat(Ops.VIEW, name="vm1", src=(UPat(Ops.CAST, name="cast", src=(UPat(Ops.VIEW, name="vm2", src=(UPat(Ops.CONTIGUOUS, name="base"))))),)),
    lambda cast,base,vm1,vm2: base.view(vm2.st+vm1.st) if isinstance(cast.dtype, ImageDType) and isinstance(base.dtype, ImageDType) else None),
