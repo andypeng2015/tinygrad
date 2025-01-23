@@ -30,7 +30,7 @@ class ProcessReplayWarning(Warning): pass
 
 # *** recreators
 
-def recreate_sched(big_sink:UOp) -> list[UOp]:
+def recreate_sched(big_sink:UOp, _) -> list[UOp]:
   sched, _, __ = create_schedule_with_vars(big_sink)
   return [x.ast for x in sched]
 def recreate_kernel(ast:UOp, opts:Renderer, applied_opts:list[Opt], name:str) -> str:
@@ -68,7 +68,7 @@ def diff(offset:int, name:str, fxn:Callable) -> tuple[int, int]|bool:
       for x in args[:-1]: logging.info(x)
       continue
     # diff kernels
-    try: assert args[-1] == good
+    try: assert str(args[-1]) == str(good)
     except AssertionError:
       changed += 1
       logging.info("PROCESS REPLAY DETECTED CHANGE")
